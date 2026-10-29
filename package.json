@@ -1,0 +1,12 @@
+{
+  "name": "pic-editor",
+  "private": true,
+  "description": "Flutter 纸张排版编辑器的 Cloudflare Workers 静态部署",
+  "scripts": {
+    "build:web": "flutter build web --release --base-href /",
+    "deploy": "npm run build:web && wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.45.0"
+  }
+}
