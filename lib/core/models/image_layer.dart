@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'editor_layer.dart';
+import 'layer_mask.dart';
 
 class ImageLayer implements EditorLayer {
   const ImageLayer({
@@ -18,6 +19,10 @@ class ImageLayer implements EditorLayer {
     required this.bytes,
     required this.sourceSize,
     this.cropRect,
+    this.clipToBelow = false,
+    this.mask,
+    this.brightness = 0,
+    this.contrast = 0,
   });
 
   @override
@@ -41,9 +46,15 @@ class ImageLayer implements EditorLayer {
 
   /// Normalized crop on the source image, `null` means the full image.
   final Rect? cropRect;
+  @override
+  final bool clipToBelow;
+  final LayerMask? mask;
 
-  Rect get normalizedCrop =>
-      cropRect ?? const Rect.fromLTWH(0, 0, 1, 1);
+  /// Built-in non-destructive adjustments, -1 .. 1.
+  final double brightness;
+  final double contrast;
+
+  Rect get normalizedCrop => cropRect ?? const Rect.fromLTWH(0, 0, 1, 1);
 
   Size get croppedSourceSize {
     final crop = normalizedCrop;
@@ -79,6 +90,28 @@ class ImageLayer implements EditorLayer {
         local.dy.abs() <= size.height / 2;
   }
 
+  Rect get paperBounds {
+    final size = displaySize;
+    final half = Offset(size.width / 2, size.height / 2);
+    final corners = <Offset>[
+      toPaper(Offset(-half.dx, -half.dy)),
+      toPaper(Offset(half.dx, -half.dy)),
+      toPaper(Offset(half.dx, half.dy)),
+      toPaper(Offset(-half.dx, half.dy)),
+    ];
+    var minX = corners.first.dx;
+    var maxX = corners.first.dx;
+    var minY = corners.first.dy;
+    var maxY = corners.first.dy;
+    for (final corner in corners) {
+      minX = math.min(minX, corner.dx);
+      maxX = math.max(maxX, corner.dx);
+      minY = math.min(minY, corner.dy);
+      maxY = math.max(maxY, corner.dy);
+    }
+    return Rect.fromLTRB(minX, minY, maxX, maxY);
+  }
+
   ImageLayer copyWith({
     String? name,
     bool? visible,
@@ -92,6 +125,11 @@ class ImageLayer implements EditorLayer {
     Size? sourceSize,
     Rect? cropRect,
     bool clearCrop = false,
+    bool? clipToBelow,
+    LayerMask? mask,
+    bool clearMask = false,
+    double? brightness,
+    double? contrast,
   }) {
     return ImageLayer(
       id: id,
@@ -106,6 +144,10 @@ class ImageLayer implements EditorLayer {
       bytes: bytes ?? this.bytes,
       sourceSize: sourceSize ?? this.sourceSize,
       cropRect: clearCrop ? null : (cropRect ?? this.cropRect),
+      clipToBelow: clipToBelow ?? this.clipToBelow,
+      mask: clearMask ? null : (mask ?? this.mask),
+      brightness: brightness ?? this.brightness,
+      contrast: contrast ?? this.contrast,
     );
   }
 
@@ -115,12 +157,14 @@ class ImageLayer implements EditorLayer {
     bool? visible,
     bool? locked,
     double? opacity,
+    bool? clipToBelow,
   }) {
     return copyWith(
       name: name,
       visible: visible,
       locked: locked,
       opacity: opacity,
+      clipToBelow: clipToBelow,
     );
   }
 }

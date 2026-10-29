@@ -2,7 +2,9 @@ import 'dart:ui';
 
 import '../utils/units.dart';
 import 'editor_layer.dart';
+import 'group_layer.dart';
 import 'image_layer.dart';
+import 'layer_tree.dart';
 import 'paper_spec.dart';
 
 class EditorDocument {
@@ -22,20 +24,23 @@ class EditorDocument {
 
   Size get sizePx => specSizePx(paper, landscape: landscape);
 
-  Size exportSizePx() => specSizePx(paper, landscape: landscape, dpi: exportDpi);
+  Size exportSizePx() =>
+      specSizePx(paper, landscape: landscape, dpi: exportDpi);
 
   EditorLayer? get selectedLayer {
     final id = selectedLayerId;
     if (id == null) return null;
-    for (final layer in layers) {
-      if (layer.id == id) return layer;
-    }
-    return null;
+    return findLayer(layers, id);
   }
 
   ImageLayer? get selectedImage {
     final layer = selectedLayer;
     return layer is ImageLayer ? layer : null;
+  }
+
+  GroupLayer? get selectedGroup {
+    final layer = selectedLayer;
+    return layer is GroupLayer ? layer : null;
   }
 
   EditorDocument copyWith({
@@ -55,11 +60,7 @@ class EditorDocument {
   }
 
   EditorDocument replaceLayer(EditorLayer layer) {
-    return copyWith(
-      layers: [
-        for (final item in layers) item.id == layer.id ? layer : item,
-      ],
-    );
+    return copyWith(layers: replaceLayerInTree(layers, layer));
   }
 
   EditorDocument remapped({
@@ -75,16 +76,24 @@ class EditorDocument {
     }
     final sx = newSize.width / oldSize.width;
     final sy = newSize.height / oldSize.height;
-    return next.copyWith(
-      layers: [
-        for (final layer in layers)
-          if (layer is ImageLayer)
-            layer.copyWith(
-              position: Offset(layer.position.dx * sx, layer.position.dy * sy),
-            )
-          else
-            layer,
-      ],
-    );
+    return next.copyWith(layers: _scaleLayers(layers, sx, sy));
   }
+}
+
+List<EditorLayer> _scaleLayers(
+  List<EditorLayer> layers,
+  double sx,
+  double sy,
+) {
+  return [
+    for (final layer in layers)
+      if (layer is ImageLayer)
+        layer.copyWith(
+          position: Offset(layer.position.dx * sx, layer.position.dy * sy),
+        )
+      else if (layer is GroupLayer)
+        layer.copyWith(children: _scaleLayers(layer.children, sx, sy))
+      else
+        layer,
+  ];
 }

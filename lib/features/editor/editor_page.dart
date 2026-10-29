@@ -73,10 +73,35 @@ class _EditorPageState extends State<EditorPage> {
         const SingleActivator(LogicalKeyboardKey.escape): () {
           if (controller.cropMode) {
             controller.cancelCrop();
+          } else if (controller.maskEditing) {
+            controller.setMaskEditing(false);
+          } else if (controller.isolating) {
+            controller.exitIsolation();
           } else {
             controller.selectLayer(null);
           }
         },
+        const SingleActivator(LogicalKeyboardKey.keyG, meta: true):
+            controller.groupSelected,
+        const SingleActivator(LogicalKeyboardKey.keyG, control: true):
+            controller.groupSelected,
+        const SingleActivator(LogicalKeyboardKey.keyG, meta: true, shift: true):
+            controller.ungroupSelected,
+        const SingleActivator(
+          LogicalKeyboardKey.keyG,
+          control: true,
+          shift: true,
+        ): controller.ungroupSelected,
+        const SingleActivator(LogicalKeyboardKey.keyE, meta: true):
+            controller.rasterizeSelected,
+        const SingleActivator(LogicalKeyboardKey.keyE, control: true):
+            controller.rasterizeSelected,
+        const SingleActivator(LogicalKeyboardKey.keyG, alt: true):
+            controller.clipSelectedToBelow,
+        const SingleActivator(LogicalKeyboardKey.keyM, meta: true):
+            controller.addMaskToSelected,
+        const SingleActivator(LogicalKeyboardKey.keyM, control: true):
+            controller.addMaskToSelected,
       },
       child: Focus(
         autofocus: true,

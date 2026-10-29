@@ -4,11 +4,13 @@ abstract class EditorLayer {
   bool get visible;
   bool get locked;
   double get opacity;
+  bool get clipToBelow;
 
   EditorLayer copyLayer({
     String? name,
     bool? visible,
     bool? locked,
     double? opacity,
+    bool? clipToBelow,
   });
 }

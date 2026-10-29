@@ -2,6 +2,7 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../../core/models/adjustment_layer.dart';
 import '../../../core/models/place_mode.dart';
 import '../../../state/editor_controller.dart';
 import '../tools/import_images.dart';
@@ -115,6 +116,36 @@ List<Widget> _toolItems(
       label: '示例图',
       vertical: vertical,
       onPressed: controller.addSampleImages,
+    ),
+    _ToolButton(
+      icon: Icons.layers,
+      label: '编组',
+      vertical: vertical,
+      onPressed:
+          controller.selectedLayerId == null ? null : controller.groupSelected,
+    ),
+    _ToolButton(
+      icon: Icons.texture,
+      label: '蒙版',
+      vertical: vertical,
+      selected: controller.maskEditing,
+      onPressed: hasLayer && !locked ? controller.addMaskToSelected : null,
+    ),
+    _ToolButton(
+      icon: Icons.tune,
+      label: '调色',
+      vertical: vertical,
+      onPressed: controller.selectedLayerId == null
+          ? null
+          : () => controller.addAdjustment(AdjustmentKind.brightness),
+    ),
+    _ToolButton(
+      icon: Icons.auto_awesome_mosaic_outlined,
+      label: '栅格化',
+      vertical: vertical,
+      onPressed: controller.selectedLayerId == null
+          ? null
+          : () => controller.rasterizeSelected(),
     ),
     _ToolButton(
       icon: Icons.fit_screen,

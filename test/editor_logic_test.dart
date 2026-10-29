@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pic_editor/core/commands/command_history.dart';
 import 'package:pic_editor/core/commands/editor_command.dart';
 import 'package:pic_editor/core/models/editor_document.dart';
+import 'package:pic_editor/core/models/group_layer.dart';
 import 'package:pic_editor/core/models/image_layer.dart';
 import 'package:pic_editor/core/models/place_mode.dart';
 import 'package:pic_editor/core/utils/decode_image.dart';
@@ -110,6 +111,18 @@ void main() {
       controller.dispose();
     });
 
+    test('画布平移和缩放会通知界面更新缩放百分比', () {
+      var notified = 0;
+      controller.addListener(() => notified += 1);
+      final before = notified;
+      controller.panBy(const Offset(24, 16));
+      expect(
+          controller.viewTransform.value.getTranslation().x, closeTo(24, 0.01));
+      expect(notified, greaterThan(before));
+      controller.zoomAt(Offset.zero, 1.5);
+      expect(controller.viewScale, closeTo(1.5, 0.01));
+    });
+
     test('示例图添加两层并选中最后一张', () async {
       await controller.addSampleImages();
       expect(controller.layers.length, 2);
@@ -205,10 +218,12 @@ void main() {
       controller.updateWorkingCrop(const Rect.fromLTWH(0, 0, 0.5, 0.5));
       controller.confirmCrop();
       controller.applyPlaceMode(PlaceMode.fit);
-      _expectFits(controller.selectedImage!.displaySize, controller.paperSizePx);
+      _expectFits(
+          controller.selectedImage!.displaySize, controller.paperSizePx);
 
       controller.applyPlaceMode(PlaceMode.fill);
-      _expectFills(controller.selectedImage!.displaySize, controller.paperSizePx);
+      _expectFills(
+          controller.selectedImage!.displaySize, controller.paperSizePx);
     });
 
     test('锁定后不能翻转删除裁剪', () async {
@@ -326,6 +341,56 @@ void main() {
       local.dispose();
       await pending;
       await Future<void>.delayed(const Duration(milliseconds: 80));
+    });
+
+    test('编组后可孤立编辑并按面包屑退出', () async {
+      await controller.addSampleImages();
+      final childId = controller.selectedLayerId!;
+      controller.groupSelected();
+      expect(controller.selectedGroup, isNotNull);
+      expect(controller.layers.whereType<GroupLayer>(), isNotEmpty);
+      controller.isolateLayer(controller.selectedLayerId!);
+      expect(controller.isolating, isTrue);
+      expect(controller.breadcrumbNames, isNotEmpty);
+      controller.exitIsolation();
+      expect(controller.isolating, isFalse);
+      controller.ungroupSelected();
+      expect(controller.layers.any((layer) => layer.id == childId), isTrue);
+    });
+
+    test('剪贴蒙版、重置图层与内置调色', () async {
+      await controller.addSampleImages();
+      final topId = controller.layers.last.id;
+      controller.selectLayer(topId);
+      controller.setClipToBelow(topId, true);
+      expect(controller.selectedImage!.clipToBelow, isTrue);
+      controller.previewLayer(
+        controller.selectedImage!.copyWith(brightness: 0.4),
+      );
+      controller.commitTransient('亮度');
+      expect(controller.selectedImage!.brightness, closeTo(0.4, 0.001));
+      controller.resetLayer();
+      expect(controller.selectedImage!.brightness, 0);
+      expect(controller.selectedImage!.clipToBelow, isFalse);
+    });
+
+    test('图层蒙版可停用', () async {
+      await controller.addSampleImages();
+      controller.addMaskToSelected();
+      expect(controller.selectedImage!.mask, isNotNull);
+      expect(controller.selectedImage!.mask!.enabled, isTrue);
+      controller.toggleMaskEnabled(controller.selectedLayerId!);
+      expect(controller.selectedImage!.mask!.enabled, isFalse);
+    });
+
+    test('穿透选择命中最内层图片', () async {
+      await controller.addSampleImages();
+      final image = controller.selectedImage!;
+      controller.groupSelected();
+      final hit = controller.hitTest(image.position, deep: true);
+      expect(hit?.id, image.id);
+      final outer = controller.hitTest(image.position, deep: false);
+      expect(outer is GroupLayer, isTrue);
     });
   });
 }

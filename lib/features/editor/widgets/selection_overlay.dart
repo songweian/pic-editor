@@ -53,7 +53,8 @@ class _SelectionPainter extends CustomPainter {
     canvas.translate(layer.position.dx, layer.position.dy);
     canvas.rotate(layer.rotation);
     canvas.drawRect(
-      Rect.fromCenter(center: Offset.zero, width: size.width, height: size.height),
+      Rect.fromCenter(
+          center: Offset.zero, width: size.width, height: size.height),
       stroke,
     );
 
@@ -138,4 +139,3 @@ HandleKind? hitHandle({
 }
 
 double selectionHandleThreshold(double viewScale) => 14 / viewScale;
-

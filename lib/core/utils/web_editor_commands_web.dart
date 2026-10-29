@@ -5,6 +5,9 @@ import 'dart:html' as html;
 import '../../features/editor/tools/import_images.dart';
 import '../../features/editor/tools/sample_image.dart';
 import '../../state/editor_controller.dart';
+import '../models/adjustment_layer.dart';
+import '../models/group_layer.dart';
+import '../models/image_layer.dart';
 import '../models/place_mode.dart';
 
 html.EventListener? _listener;
@@ -67,6 +70,26 @@ void _writeState(EditorController controller) {
   root.setAttribute('data-crop', controller.cropMode ? '1' : '0');
   root.setAttribute('data-selected', controller.selectedLayerId ?? '');
   root.setAttribute('data-can-undo', controller.canUndo ? '1' : '0');
+  root.setAttribute('data-isolating', controller.isolating ? '1' : '0');
+  root.setAttribute(
+    'data-breadcrumb',
+    controller.isolating
+        ? ['主画布', ...controller.breadcrumbNames].join(' > ')
+        : '',
+  );
+  root.setAttribute(
+    'data-clip',
+    controller.selectedLayer?.clipToBelow == true ? '1' : '0',
+  );
+  final selected = controller.selectedLayer;
+  root.setAttribute(
+    'data-grouped',
+    selected is GroupLayer ? '1' : '0',
+  );
+  root.setAttribute(
+    'data-masked',
+    selected is ImageLayer && selected.mask != null ? '1' : '0',
+  );
 }
 
 Future<void> _handle(
@@ -151,6 +174,34 @@ Future<void> _handle(
       break;
     case 'export':
       await exportPng();
+      break;
+    case 'group':
+      controller.groupSelected();
+      break;
+    case 'ungroup':
+      controller.ungroupSelected();
+      break;
+    case 'isolate':
+      final isolateId = controller.selectedLayerId;
+      if (isolateId != null) controller.isolateLayer(isolateId);
+      break;
+    case 'exit-isolate':
+      controller.exitIsolation();
+      break;
+    case 'mask':
+      controller.addMaskToSelected();
+      break;
+    case 'clip':
+      controller.clipSelectedToBelow();
+      break;
+    case 'reset-layer':
+      controller.resetLayer();
+      break;
+    case 'rasterize':
+      await controller.rasterizeSelected();
+      break;
+    case 'adjustment':
+      controller.addAdjustment(AdjustmentKind.brightness);
       break;
   }
 }

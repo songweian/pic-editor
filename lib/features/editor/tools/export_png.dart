@@ -4,7 +4,6 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../../../core/models/editor_document.dart';
-import '../../../core/models/image_layer.dart';
 import '../../../core/utils/units.dart';
 import '../widgets/paper_surface.dart';
 
@@ -25,12 +24,12 @@ Future<Uint8List> exportDocumentPng({
   );
   canvas.scale(scale);
 
-  for (final layer in document.layers) {
-    if (!layer.visible || layer is! ImageLayer) continue;
-    final image = images[layer.id];
-    if (image == null) continue;
-    paintImageLayer(canvas, layer, image);
-  }
+  paintLayerTree(
+    canvas,
+    Size(width / scale, height / scale),
+    layers: document.layers,
+    images: images,
+  );
 
   final picture = recorder.endRecording();
   final out = await picture.toImage(width, height);

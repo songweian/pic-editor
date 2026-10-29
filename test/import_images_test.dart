@@ -32,11 +32,13 @@ void main() {
 
     test('失败给出中文提示而不是原始异常', () {
       expect(
-        importErrorMessage(const ImportException('无法读取所选图片，请改选 PNG、JPEG、GIF 或 WebP')),
+        importErrorMessage(
+            const ImportException('无法读取所选图片，请改选 PNG、JPEG、GIF 或 WebP')),
         '无法读取所选图片，请改选 PNG、JPEG、GIF 或 WebP',
       );
       expect(
-        importErrorMessage(Exception('type ByteBuffer is not a subtype of Uint8List')),
+        importErrorMessage(
+            Exception('type ByteBuffer is not a subtype of Uint8List')),
         '导入失败，请换一张图片后重试',
       );
     });
@@ -75,7 +77,8 @@ void main() {
 
       await expectLater(
         importedImagesFromPicked([
-          PickedImageBytes(name: 'bad.png', bytes: Uint8List.fromList([1, 2, 3, 4])),
+          PickedImageBytes(
+              name: 'bad.png', bytes: Uint8List.fromList([1, 2, 3, 4])),
           const PickedImageBytes(name: 'missing.png'),
         ]),
         throwsA(isA<ImportException>()),

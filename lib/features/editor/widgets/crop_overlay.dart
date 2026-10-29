@@ -97,7 +97,8 @@ class _CropPainter extends CustomPainter {
     final handle = 9 / viewScale;
     final fill = Paint()..color = const Color(0xFF1C1E22);
     for (final point in cropHandlePoints(cropRect)) {
-      final rect = Rect.fromCenter(center: point, width: handle, height: handle);
+      final rect =
+          Rect.fromCenter(center: point, width: handle, height: handle);
       canvas.drawRect(rect, fill);
       canvas.drawRect(rect, stroke);
     }

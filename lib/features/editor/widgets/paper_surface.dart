@@ -2,36 +2,10 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
-import '../../../core/models/image_layer.dart';
 import '../../../state/editor_controller.dart';
+import 'layer_render.dart';
 
-void paintImageLayer(Canvas canvas, ImageLayer layer, ui.Image image) {
-  if (layer.opacity <= 0) return;
-  final crop = layer.normalizedCrop;
-  final src = Rect.fromLTWH(
-    crop.left * image.width,
-    crop.top * image.height,
-    crop.width * image.width,
-    crop.height * image.height,
-  );
-  if (src.width <= 0.5 || src.height <= 0.5) return;
-
-  canvas.save();
-  canvas.translate(layer.position.dx, layer.position.dy);
-  canvas.rotate(layer.rotation);
-  canvas.scale(layer.scaleX, layer.scaleY);
-  final dst = Rect.fromCenter(
-    center: Offset.zero,
-    width: src.width,
-    height: src.height,
-  );
-  final paint = Paint()
-    ..isAntiAlias = true
-    ..filterQuality = FilterQuality.high
-    ..color = Color.fromRGBO(255, 255, 255, layer.opacity);
-  canvas.drawImageRect(image, src, dst, paint);
-  canvas.restore();
-}
+export 'layer_render.dart' show paintImageLayer, paintLayerTree;
 
 class PaperBoard extends StatelessWidget {
   const PaperBoard({
@@ -70,24 +44,28 @@ class PaperBoard extends StatelessWidget {
 
 class PaperPainter extends CustomPainter {
   PaperPainter(this.controller)
-      : layers = List<ImageLayer>.from(
-          controller.layers.whereType<ImageLayer>(),
-        ),
-        images = Map<String, ui.Image>.from(controller.decodedImages);
+      : layers = List.of(controller.layers),
+        images = Map<String, ui.Image>.from(controller.decodedImages),
+        isolationId = controller.isolationId,
+        wireframe = controller.wireframePreview;
 
   final EditorController controller;
-  final List<ImageLayer> layers;
+  final List layers;
   final Map<String, ui.Image> images;
+  final String? isolationId;
+  final bool wireframe;
 
   @override
   void paint(Canvas canvas, Size size) {
     canvas.drawRect(Offset.zero & size, Paint()..color = Colors.white);
-    for (final layer in layers) {
-      if (!layer.visible) continue;
-      final image = images[layer.id];
-      if (image == null) continue;
-      paintImageLayer(canvas, layer, image);
-    }
+    paintLayerTree(
+      canvas,
+      size,
+      layers: controller.layers,
+      images: images,
+      isolationId: isolationId,
+      wireframe: wireframe,
+    );
   }
 
   @override

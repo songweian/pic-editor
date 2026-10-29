@@ -18,6 +18,7 @@
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="description" content="多端纸张排版图片编辑器">
 
   <!-- iOS meta tags & icons -->
@@ -39,13 +40,18 @@
       padding: 0;
       overflow: hidden;
       background: #121417;
+      touch-action: none;
+      -webkit-user-select: none;
+      user-select: none;
+      overscroll-behavior: none;
     }
-    flt-glass-pane {
+    flt-glass-pane, flutter-view {
       position: absolute !important;
       inset: 0 !important;
       width: 100% !important;
       height: 100% !important;
       display: block !important;
+      touch-action: none;
     }
   </style>
 
@@ -66,6 +72,15 @@
   />
   <script>
     document.addEventListener('contextmenu', function(event) {
+      event.preventDefault();
+    });
+    document.addEventListener('gesturestart', function(event) {
+      event.preventDefault();
+    });
+    document.addEventListener('gesturechange', function(event) {
+      event.preventDefault();
+    });
+    document.addEventListener('gestureend', function(event) {
       event.preventDefault();
     });
     window.addEventListener('load', function(ev) {

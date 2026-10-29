@@ -6,9 +6,13 @@ import 'package:flutter/material.dart';
 
 import '../core/commands/command_history.dart';
 import '../core/commands/editor_command.dart';
+import '../core/models/adjustment_layer.dart';
 import '../core/models/editor_document.dart';
 import '../core/models/editor_layer.dart';
+import '../core/models/group_layer.dart';
 import '../core/models/image_layer.dart';
+import '../core/models/layer_mask.dart';
+import '../core/models/layer_tree.dart';
 import '../core/models/paper_spec.dart';
 import '../core/models/place_mode.dart';
 import '../core/utils/decode_image.dart';
@@ -18,6 +22,7 @@ import '../data/paper_presets.dart';
 import '../features/editor/tools/export_png.dart';
 import '../features/editor/tools/import_images.dart';
 import '../features/editor/tools/sample_image.dart';
+import '../features/editor/widgets/layer_render.dart';
 
 enum HandleKind { nw, n, ne, e, se, s, sw, w, rotate }
 
@@ -27,7 +32,9 @@ class EditorController extends ChangeNotifier {
           paper: PaperPresets.defaultSpec,
           landscape: false,
           layers: const [],
-        );
+        ) {
+    viewTransform.addListener(_onViewTransform);
+  }
 
   final CommandHistory _history = CommandHistory();
   final TransformationController viewTransform = TransformationController();
@@ -43,6 +50,11 @@ class EditorController extends ChangeNotifier {
   int _layerSeq = 1;
   int viewGeneration = 0;
   Size? lastViewport;
+  String? _isolationId;
+  bool _wireframePreview = false;
+  bool _maskPaintBlack = true;
+  bool _maskEditing = false;
+  final Set<String> _collapsedGroups = <String>{};
 
   EditorDocument get document => _document;
   PaperSpec get paper => _document.paper;
@@ -50,7 +62,14 @@ class EditorController extends ChangeNotifier {
   Size get paperSizePx => _document.sizePx;
   List<EditorLayer> get layers => _document.layers;
   ImageLayer? get selectedImage => _document.selectedImage;
+  EditorLayer? get selectedLayer => _document.selectedLayer;
+  GroupLayer? get selectedGroup => _document.selectedGroup;
   String? get selectedLayerId => _document.selectedLayerId;
+  String? get isolationId => _isolationId;
+  bool get isolating => _isolationId != null;
+  bool get wireframePreview => _wireframePreview;
+  bool get maskEditing => _maskEditing;
+  bool get maskPaintBlack => _maskPaintBlack;
   bool get panMode => _panMode;
   bool get cropMode => _cropMode;
   Rect get workingCrop => _workingCrop;
@@ -61,9 +80,15 @@ class EditorController extends ChangeNotifier {
   String? get redoLabel => _history.redoLabel;
   double get viewScale => viewTransform.value.getMaxScaleOnAxis();
 
+  void _onViewTransform() {
+    if (_disposed) return;
+    notifyListeners();
+  }
+
   @override
   void dispose() {
     _disposed = true;
+    viewTransform.removeListener(_onViewTransform);
     for (final image in decodedImages.values) {
       image.dispose();
     }
@@ -83,6 +108,12 @@ class EditorController extends ChangeNotifier {
 
   void selectLayer(String? id) {
     if (_cropMode) return;
+    if (id != null && _isolationId != null) {
+      final allowed = isolatedSubtreeIds(layers, _isolationId);
+      if (id != _isolationId && !allowed.contains(id)) {
+        return;
+      }
+    }
     if (_document.selectedLayerId == id) return;
     _document = _document.copyWith(
       selectedLayerId: id,
@@ -193,43 +224,43 @@ class EditorController extends ChangeNotifier {
   }
 
   void setVisible(String id, bool visible) {
-    final layer = _imageById(id);
+    final layer = _layerById(id);
     if (layer == null) return;
     _commit(
-      _document.replaceLayer(layer.copyWith(visible: visible)),
+      _document.replaceLayer(layer.copyLayer(visible: visible)),
       visible ? '显示图层' : '隐藏图层',
     );
   }
 
   void setLocked(String id, bool locked) {
-    final layer = _imageById(id);
+    final layer = _layerById(id);
     if (layer == null) return;
     _commit(
-      _document.replaceLayer(layer.copyWith(locked: locked)),
+      _document.replaceLayer(layer.copyLayer(locked: locked)),
       locked ? '锁定图层' : '解锁图层',
     );
   }
 
   void renameLayer(String id, String name) {
-    final layer = _imageById(id);
+    final layer = _layerById(id);
     if (layer == null) return;
     final trimmed = name.trim().isEmpty ? layer.name : name.trim();
     if (trimmed == layer.name) return;
-    _commit(_document.replaceLayer(layer.copyWith(name: trimmed)), '重命名图层');
+    _commit(_document.replaceLayer(layer.copyLayer(name: trimmed)), '重命名图层');
   }
 
   void deleteLayer(String id) {
-    final index = _document.layers.indexWhere((layer) => layer.id == id);
-    if (index < 0) return;
-    final target = _document.layers[index];
-    if (target.locked) return;
-    final remaining = [..._document.layers]..removeAt(index);
+    final ref = findLayerRef(_document.layers, id);
+    if (ref == null || ref.layer.locked) return;
+    if (_isolationId == id) _isolationId = null;
+    final remaining = removeLayerInTree(_document.layers, id);
+    final siblings = siblingsOf(_document.layers, id);
     String? nextSelected = _document.selectedLayerId;
     if (nextSelected == id) {
-      if (remaining.isEmpty) {
-        nextSelected = null;
+      if (siblings.length <= 1) {
+        nextSelected = ref.parentId;
       } else {
-        nextSelected = remaining[math.min(index, remaining.length - 1)].id;
+        nextSelected = siblings[math.min(ref.index, siblings.length - 2)].id;
       }
     }
     _commit(
@@ -240,7 +271,6 @@ class EditorController extends ChangeNotifier {
       ),
       '删除图层',
     );
-    // Keep decodedImages cached so undo can restore the layer immediately.
   }
 
   void deleteSelected() {
@@ -250,46 +280,44 @@ class EditorController extends ChangeNotifier {
   }
 
   int layerIndex(String id) {
-    return _document.layers.indexWhere((layer) => layer.id == id);
+    final ref = findLayerRef(_document.layers, id);
+    return ref?.index ?? -1;
   }
 
   bool isTopLayer(String id) {
-    final index = layerIndex(id);
-    return index >= 0 && index == _document.layers.length - 1;
+    final siblings = siblingsOf(_document.layers, id);
+    return siblings.isNotEmpty && siblings.last.id == id;
   }
 
   bool isBottomLayer(String id) {
-    return layerIndex(id) == 0;
+    final siblings = siblingsOf(_document.layers, id);
+    return siblings.isNotEmpty && siblings.first.id == id;
   }
 
   void moveLayer(String id, int delta) {
-    final index = layerIndex(id);
-    if (index < 0) return;
-    _moveLayerTo(
-      id,
-      index + delta,
+    if (findLayer(_document.layers, id) == null) return;
+    _commit(
+      _document.copyWith(layers: moveSibling(_document.layers, id, delta)),
       delta > 0 ? '上移图层' : '下移图层',
     );
   }
 
   void bringToFront(String id) {
-    if (_document.layers.isEmpty) return;
-    _moveLayerTo(id, _document.layers.length - 1, '置于顶层');
+    _commit(
+      _document.copyWith(
+        layers: moveSiblingToEdge(_document.layers, id, front: true),
+      ),
+      '置于顶层',
+    );
   }
 
   void sendToBack(String id) {
-    _moveLayerTo(id, 0, '置于底层');
-  }
-
-  void _moveLayerTo(String id, int targetIndex, String label) {
-    final list = [..._document.layers];
-    final index = list.indexWhere((layer) => layer.id == id);
-    if (index < 0 || list.length < 2) return;
-    final nextIndex = targetIndex.clamp(0, list.length - 1);
-    if (nextIndex == index) return;
-    final item = list.removeAt(index);
-    list.insert(nextIndex, item);
-    _commit(_document.copyWith(layers: list), label);
+    _commit(
+      _document.copyWith(
+        layers: moveSiblingToEdge(_document.layers, id, front: false),
+      ),
+      '置于底层',
+    );
   }
 
   void flipHorizontal() {
@@ -312,6 +340,7 @@ class EditorController extends ChangeNotifier {
 
   void beginTransient() {
     _transientBefore ??= _document;
+    setDragWireframe(true);
   }
 
   void previewLayer(ImageLayer layer) {
@@ -327,6 +356,7 @@ class EditorController extends ChangeNotifier {
     _history.pushApplied(
       DocumentCommand(label: label, before: before, after: _document),
     );
+    setDragWireframe(false);
     notifyListeners();
   }
 
@@ -335,6 +365,7 @@ class EditorController extends ChangeNotifier {
     if (before == null) return;
     _document = before;
     _transientBefore = null;
+    setDragWireframe(false);
     notifyListeners();
   }
 
@@ -405,10 +436,8 @@ class EditorController extends ChangeNotifier {
   }
 
   Future<void> ensureDecoded() async {
-    for (final layer in _document.layers) {
-      if (layer is ImageLayer) {
-        await _decode(layer);
-      }
+    for (final layer in imageLayersOf(_document.layers)) {
+      await _decode(layer);
     }
   }
 
@@ -429,10 +458,12 @@ class EditorController extends ChangeNotifier {
     lastViewport = viewport;
     final paper = paperSizePx;
     if (paper.width <= 0 || paper.height <= 0) return;
-    final scale = math.min(
-      (viewport.width - margin) / paper.width,
-      (viewport.height - margin) / paper.height,
-    ).clamp(0.05, 8.0);
+    final scale = math
+        .min(
+          (viewport.width - margin) / paper.width,
+          (viewport.height - margin) / paper.height,
+        )
+        .clamp(0.05, 8.0);
     final dx = (viewport.width - paper.width * scale) / 2;
     final dy = (viewport.height - paper.height * scale) / 2;
     viewTransform.value = Matrix4.identity()
@@ -451,6 +482,31 @@ class EditorController extends ChangeNotifier {
       ..translate(dx, dy)
       ..scale(scale);
     notifyListeners();
+  }
+
+  Offset viewportToPaper(Offset viewportPoint) {
+    final inv = Matrix4.copy(viewTransform.value)..invert();
+    return _transformPoint(inv, viewportPoint);
+  }
+
+  Matrix4 copyViewMatrix() => Matrix4.copy(viewTransform.value);
+
+  void restoreViewMatrix(Matrix4 matrix) {
+    viewTransform.value = Matrix4.copy(matrix);
+    notifyListeners();
+  }
+
+  void panBy(Offset viewportDelta) {
+    if (viewportDelta == Offset.zero) return;
+    final current = viewTransform.value;
+    final translation = current.getTranslation();
+    final scale = current.getMaxScaleOnAxis();
+    viewTransform.value = Matrix4.identity()
+      ..translate(
+        translation.x + viewportDelta.dx,
+        translation.y + viewportDelta.dy,
+      )
+      ..scale(scale);
   }
 
   void zoomAt(Offset viewportPoint, double factor) {
@@ -524,13 +580,54 @@ class EditorController extends ChangeNotifier {
     return start.copyWith(scaleX: scaleX, scaleY: scaleY);
   }
 
-  ImageLayer? hitTest(Offset paperPoint, {bool includeLocked = false}) {
-    for (final layer in _document.layers.reversed) {
-      if (layer is! ImageLayer || !layer.visible) continue;
-      if (layer.locked && !includeLocked) continue;
-      if (layer.containsPaperPoint(paperPoint)) return layer;
+  EditorLayer? hitTest(
+    Offset paperPoint, {
+    bool includeLocked = false,
+    bool deep = false,
+  }) {
+    final scope = _hitScope();
+    EditorLayer? innermost;
+    void visit(List<EditorLayer> list) {
+      for (final layer in list.reversed) {
+        if (!layer.visible) continue;
+        if (layer.locked && !includeLocked && layer is! GroupLayer) continue;
+        if (layer is GroupLayer) {
+          if (layerContainsPoint(layer, paperPoint)) {
+            visit(layer.children);
+            innermost ??= layer;
+          }
+        } else if (layer is ImageLayer &&
+            layer.containsPaperPoint(paperPoint)) {
+          innermost ??= layer;
+        }
+      }
     }
-    return null;
+
+    visit(scope);
+    final hit = innermost;
+    if (hit == null) return null;
+    if (deep) return hit;
+    final ref = findLayerRef(_document.layers, hit.id);
+    if (ref == null) return hit;
+    final path = ref.pathIds;
+    final rootIndex = _isolationId == null ? 0 : path.indexOf(_isolationId!);
+    final childIndex = _isolationId == null ? 0 : rootIndex + 1;
+    if (childIndex >= 0 && childIndex < path.length) {
+      return findLayer(_document.layers, path[childIndex]) ?? hit;
+    }
+    return hit;
+  }
+
+  List<EditorLayer> _hitScope() {
+    if (_isolationId == null) return _document.layers;
+    final node = findLayer(_document.layers, _isolationId!);
+    if (node is GroupLayer) return node.children;
+    return node == null ? _document.layers : [node];
+  }
+
+  ImageLayer? hitTestImage(Offset paperPoint, {bool includeLocked = false}) {
+    final hit = hitTest(paperPoint, includeLocked: includeLocked, deep: true);
+    return hit is ImageLayer ? hit : null;
   }
 
   ImageLayer _placedLayer({
@@ -573,11 +670,11 @@ class EditorController extends ChangeNotifier {
     );
   }
 
+  EditorLayer? _layerById(String id) => findLayer(_document.layers, id);
+
   ImageLayer? _imageById(String id) {
-    for (final layer in _document.layers) {
-      if (layer.id == id && layer is ImageLayer) return layer;
-    }
-    return null;
+    final layer = _layerById(id);
+    return layer is ImageLayer ? layer : null;
   }
 
   void _commit(EditorDocument next, String label) {
@@ -594,10 +691,8 @@ class EditorController extends ChangeNotifier {
   }
 
   void _syncDecoded() {
-    for (final layer in _document.layers) {
-      if (layer is ImageLayer) {
-        _decodeLater(layer);
-      }
+    for (final layer in imageLayersOf(_document.layers)) {
+      _decodeLater(layer);
     }
   }
 
@@ -647,6 +742,336 @@ class EditorController extends ChangeNotifier {
   double _signedScale(double absValue, double original) {
     final sign = original < 0 ? -1.0 : 1.0;
     return absValue.abs() * sign;
+  }
+
+  List<String> get breadcrumbIds {
+    final id = _isolationId ?? selectedLayerId;
+    if (id == null) return const [];
+    return findLayerRef(_document.layers, id)?.pathIds ?? const [];
+  }
+
+  List<String> get breadcrumbNames {
+    final id = _isolationId ?? selectedLayerId;
+    if (id == null) return const [];
+    return findLayerRef(_document.layers, id)?.pathNames ?? const [];
+  }
+
+  bool isGroupCollapsed(String id) => _collapsedGroups.contains(id);
+
+  void toggleGroupCollapsed(String id) {
+    if (_collapsedGroups.contains(id)) {
+      _collapsedGroups.remove(id);
+    } else {
+      _collapsedGroups.add(id);
+    }
+    notifyListeners();
+  }
+
+  void isolateLayer(String id) {
+    if (findLayer(_document.layers, id) == null) return;
+    _isolationId = id;
+    _document = _document.copyWith(selectedLayerId: id);
+    notifyListeners();
+  }
+
+  void exitIsolation({String? toId}) {
+    if (_isolationId == null && toId == null) return;
+    _isolationId = toId;
+    notifyListeners();
+  }
+
+  void jumpBreadcrumb(String id) {
+    if (id.isEmpty) {
+      _isolationId = null;
+      notifyListeners();
+      return;
+    }
+    isolateLayer(id);
+  }
+
+  void groupSelected() {
+    final id = selectedLayerId;
+    if (id == null) return;
+    final ref = findLayerRef(_document.layers, id);
+    if (ref == null) return;
+    final group = GroupLayer(
+      id: newId(),
+      name: '图层组',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      children: [ref.layer],
+    );
+    _commit(
+      _document.copyWith(
+        layers: _insertAt(ref, group),
+        selectedLayerId: group.id,
+      ),
+      '编组',
+    );
+  }
+
+  List<EditorLayer> _insertAt(LayerRef ref, EditorLayer node) {
+    List<EditorLayer> insert(List<EditorLayer> list) {
+      final copy = [...list];
+      final index = copy.indexWhere((layer) => layer.id == ref.layer.id);
+      if (index >= 0) {
+        copy[index] = node;
+        return copy;
+      }
+      return [
+        for (final layer in list)
+          if (layer is GroupLayer)
+            layer.copyWith(children: insert(layer.children))
+          else
+            layer,
+      ];
+    }
+
+    return insert(_document.layers);
+  }
+
+  void ungroupSelected() {
+    final group = selectedGroup;
+    if (group == null) return;
+    final ref = findLayerRef(_document.layers, group.id);
+    if (ref == null) return;
+    List<EditorLayer> explode(List<EditorLayer> list) {
+      final index = list.indexWhere((layer) => layer.id == group.id);
+      if (index >= 0) {
+        final copy = [...list]..replaceRange(index, index + 1, group.children);
+        return copy;
+      }
+      return [
+        for (final layer in list)
+          if (layer is GroupLayer)
+            layer.copyWith(children: explode(layer.children))
+          else
+            layer,
+      ];
+    }
+
+    _commit(
+      _document.copyWith(
+        layers: explode(_document.layers),
+        selectedLayerId:
+            group.children.isEmpty ? ref.parentId : group.children.last.id,
+      ),
+      '取消编组',
+    );
+  }
+
+  void setPassThrough(String id, bool value) {
+    final layer = _layerById(id);
+    if (layer is! GroupLayer) return;
+    _commit(
+      _document.replaceLayer(layer.copyWith(passThrough: value)),
+      value ? '穿透混合' : '正常封装',
+    );
+  }
+
+  void addAdjustment(AdjustmentKind kind) {
+    final target = selectedLayer;
+    if (target == null) return;
+    final adj = AdjustmentLayer(
+      id: newId(),
+      name: kind.label,
+      visible: true,
+      locked: false,
+      opacity: 1,
+      kind: kind,
+      amount: 0.2,
+      clipToBelow: true,
+    );
+    final siblings = siblingsOf(_document.layers, target.id);
+    final index = siblings.indexWhere((layer) => layer.id == target.id);
+    List<EditorLayer> insertAfter(List<EditorLayer> list) {
+      final i = list.indexWhere((layer) => layer.id == target.id);
+      if (i >= 0) {
+        final copy = [...list]..insert(i + 1, adj);
+        return copy;
+      }
+      return [
+        for (final layer in list)
+          if (layer is GroupLayer)
+            layer.copyWith(children: insertAfter(layer.children))
+          else
+            layer,
+      ];
+    }
+
+    if (index < 0) return;
+    _commit(
+      _document.copyWith(
+        layers: insertAfter(_document.layers),
+        selectedLayerId: adj.id,
+      ),
+      '添加${kind.label}',
+    );
+  }
+
+  void setAdjustmentAmount(String id, double amount) {
+    final layer = _layerById(id);
+    if (layer is! AdjustmentLayer) return;
+    _commit(
+      _document.replaceLayer(layer.copyWith(amount: amount.clamp(-1.0, 1.0))),
+      '调整${layer.kind.label}',
+    );
+  }
+
+  void setClipToBelow(String id, bool value) {
+    final layer = _layerById(id);
+    if (layer == null) return;
+    _commit(
+      _document.replaceLayer(layer.copyLayer(clipToBelow: value)),
+      value ? '剪贴蒙版' : '取消剪贴',
+    );
+  }
+
+  void clipSelectedToBelow() {
+    final id = selectedLayerId;
+    if (id == null || isBottomLayer(id)) return;
+    setClipToBelow(id, !(_layerById(id)?.clipToBelow ?? false));
+  }
+
+  void addMaskToSelected() {
+    final layer = selectedImage;
+    if (layer == null || layer.locked) return;
+    _commit(
+      _document.replaceLayer(layer.copyWith(mask: LayerMask.fullVisible())),
+      '添加图层蒙版',
+    );
+    _maskEditing = true;
+    notifyListeners();
+  }
+
+  void toggleMaskEnabled(String id) {
+    final layer = _imageById(id);
+    final mask = layer?.mask;
+    if (layer == null || mask == null) return;
+    _commit(
+      _document.replaceLayer(
+        layer.copyWith(mask: mask.copyWith(enabled: !mask.enabled)),
+      ),
+      mask.enabled ? '停用蒙版' : '启用蒙版',
+    );
+  }
+
+  void setMaskEditing(bool value) {
+    _maskEditing = value;
+    notifyListeners();
+  }
+
+  void setMaskPaintBlack(bool value) {
+    _maskPaintBlack = value;
+    notifyListeners();
+  }
+
+  void paintMaskAt(Offset paperPoint, {double radius = 18}) {
+    final layer = selectedImage;
+    final mask = layer?.mask;
+    if (layer == null || mask == null || !mask.enabled || layer.locked) return;
+    final local = layer.toLocal(paperPoint);
+    final size = layer.displaySize;
+    if (size.width <= 1 || size.height <= 1) return;
+    final u = (local.dx / size.width + 0.5).clamp(0.0, 1.0);
+    final v = (local.dy / size.height + 0.5).clamp(0.0, 1.0);
+    final pixels = Uint8List.fromList(mask.pixels);
+    final rr = (radius / size.width * mask.width).clamp(1.0, mask.width / 2);
+    final cx = u * (mask.width - 1);
+    final cy = v * (mask.height - 1);
+    final value = _maskPaintBlack ? 0 : 255;
+    for (var y = 0; y < mask.height; y++) {
+      for (var x = 0; x < mask.width; x++) {
+        if ((x - cx) * (x - cx) + (y - cy) * (y - cy) <= rr * rr) {
+          pixels[y * mask.width + x] = value;
+        }
+      }
+    }
+    beginTransient();
+    previewLayer(layer.copyWith(mask: mask.copyWith(pixels: pixels)));
+  }
+
+  void resetLayer() {
+    final layer = selectedLayer;
+    if (layer == null || layer.locked) return;
+    if (layer is ImageLayer) {
+      _commit(
+        _document.replaceLayer(
+          layer.copyWith(
+            brightness: 0,
+            contrast: 0,
+            clearMask: true,
+            clipToBelow: false,
+            clearCrop: true,
+          ),
+        ),
+        '重置图层',
+      );
+      return;
+    }
+    if (layer is AdjustmentLayer) {
+      _commit(
+        _document.replaceLayer(layer.copyWith(amount: 0)),
+        '重置图层',
+      );
+    }
+  }
+
+  Future<void> rasterizeSelected() async {
+    final layer = selectedLayer;
+    if (layer == null || layer.locked) return;
+    await ensureDecoded();
+    final bounds = layerBounds(layer) ?? (Offset.zero & paperSizePx);
+    final width = bounds.width.ceil().clamp(1, 8000);
+    final height = bounds.height.ceil().clamp(1, 8000);
+    final recorder = ui.PictureRecorder();
+    final canvas = Canvas(recorder);
+    canvas.translate(-bounds.left, -bounds.top);
+    paintLayerTree(
+      canvas,
+      paperSizePx,
+      layers: layer is GroupLayer ? layer.children : [layer],
+      images: decodedImages,
+    );
+    final picture = recorder.endRecording();
+    final image = await picture.toImage(width, height);
+    final data = await image.toByteData(format: ui.ImageByteFormat.png);
+    image.dispose();
+    picture.dispose();
+    if (data == null) return;
+    final bytes = data.buffer.asUint8List();
+    final raster = ImageLayer(
+      id: newId(),
+      name: '${layer.name} 栅格',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      position: bounds.center,
+      rotation: 0,
+      scaleX: 1,
+      scaleY: 1,
+      bytes: bytes,
+      sourceSize: Size(width.toDouble(), height.toDouble()),
+    );
+    final ref = findLayerRef(_document.layers, layer.id);
+    if (ref == null) return;
+    _commit(
+      _document.copyWith(
+        layers: _insertAt(ref, raster),
+        selectedLayerId: raster.id,
+      ),
+      '栅格化',
+    );
+    _decodeLater(raster);
+    if (_isolationId == layer.id) _isolationId = raster.id;
+  }
+
+  void setDragWireframe(bool dragging) {
+    final should = dragging && nestingComplexity(_document.layers) >= 8;
+    if (_wireframePreview == should) return;
+    _wireframePreview = should;
+    notifyListeners();
   }
 
   Offset _transformPoint(Matrix4 matrix, Offset point) {
