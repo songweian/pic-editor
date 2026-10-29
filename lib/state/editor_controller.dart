@@ -126,18 +126,18 @@ class EditorController extends ChangeNotifier {
     if (_cropMode) return;
     final spec = PaperPresets.byId(id);
     if (spec.id == _document.paper.id) return;
+    viewGeneration++;
     _commit(
       _document.remapped(paper: spec),
       '切换纸张 ${spec.label}',
     );
-    viewGeneration++;
   }
 
   void toggleOrientation() {
     if (_cropMode) return;
+    viewGeneration++;
     final next = _document.remapped(landscape: !_document.landscape);
     _commit(next, next.landscape ? '横向纸张' : '纵向纸张');
-    viewGeneration++;
   }
 
   Future<int> importImages({PlaceMode mode = PlaceMode.fit}) async {
@@ -414,17 +414,13 @@ class EditorController extends ChangeNotifier {
     }
     if (!_history.canUndo) return;
     cancelTransient();
-    _document = _history.undo(_document);
-    _syncDecoded();
-    notifyListeners();
+    _applyHistoryDocument(_history.undo(_document));
   }
 
   void redo() {
     if (_cropMode || !_history.canRedo) return;
     cancelTransient();
-    _document = _history.redo(_document);
-    _syncDecoded();
-    notifyListeners();
+    _applyHistoryDocument(_history.redo(_document));
   }
 
   Future<Uint8List> exportPngBytes() async {
@@ -675,6 +671,15 @@ class EditorController extends ChangeNotifier {
   ImageLayer? _imageById(String id) {
     final layer = _layerById(id);
     return layer is ImageLayer ? layer : null;
+  }
+
+  void _applyHistoryDocument(EditorDocument next) {
+    final paperChanged = _document.paper.id != next.paper.id ||
+        _document.landscape != next.landscape;
+    _document = next;
+    if (paperChanged) viewGeneration++;
+    _syncDecoded();
+    notifyListeners();
   }
 
   void _commit(EditorDocument next, String label) {

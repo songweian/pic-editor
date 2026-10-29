@@ -17,7 +17,8 @@ class PaperPickerButton extends StatelessWidget {
     final paper = controller.paper;
     final mm = controller.document.sizeMm;
     return PopupMenuButton<String>(
-      tooltip: '选择纸张',
+      tooltip: controller.cropMode ? '裁剪时不能换纸张' : '选择纸张',
+      enabled: !controller.cropMode && !controller.exporting,
       onSelected: controller.setPaper,
       itemBuilder: (context) {
         final items = <PopupMenuEntry<String>>[];
@@ -38,8 +39,20 @@ class PaperPickerButton extends StatelessWidget {
             items.add(
               PopupMenuItem<String>(
                 value: spec.id,
-                child: Text(
-                  '${spec.label}  ${formatMm(spec.widthMm)}×${formatMm(spec.heightMm)} mm',
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 22,
+                      child: spec.id == paper.id
+                          ? const Icon(Icons.check, size: 16)
+                          : null,
+                    ),
+                    Expanded(
+                      child: Text(
+                        '${spec.label}  ${formatMm(spec.widthMm)}×${formatMm(spec.heightMm)} mm',
+                      ),
+                    ),
+                  ],
                 ),
               ),
             );
@@ -74,8 +87,12 @@ class OrientationToggle extends StatelessWidget {
   Widget build(BuildContext context) {
     final controller = context.watch<EditorController>();
     return IconButton(
-      tooltip: controller.landscape ? '当前横向，点击改为纵向' : '当前纵向，点击改为横向',
-      onPressed: controller.toggleOrientation,
+      tooltip: controller.cropMode
+          ? '裁剪时不能改方向'
+          : controller.landscape
+              ? '当前横向，点击改为纵向'
+              : '当前纵向，点击改为横向',
+      onPressed: controller.cropMode ? null : controller.toggleOrientation,
       icon: Icon(
         controller.landscape ? Icons.crop_landscape : Icons.crop_portrait,
       ),

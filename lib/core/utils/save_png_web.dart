@@ -10,7 +10,11 @@ Future<String?> savePng(Uint8List bytes, String filename) async {
     ..download = filename
     ..style.display = 'none';
   html.document.body!.append(anchor);
+  html.document.documentElement?.setAttribute('data-last-download', filename);
+  html.document.documentElement
+      ?.setAttribute('data-last-download-bytes', '${bytes.length}');
   anchor.click();
+  await Future<void>.delayed(const Duration(milliseconds: 400));
   anchor.remove();
   html.Url.revokeObjectUrl(url);
   return filename;

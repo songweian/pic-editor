@@ -55,6 +55,43 @@ void main() {
         mapped.position.dy,
         closeTo(layer.position.dy * newSize.height / oldSize.height, 0.01),
       );
+      expect(
+        mapped.scaleX,
+        closeTo(layer.scaleX * newSize.width / oldSize.width, 0.01),
+      );
+      expect(
+        mapped.scaleY,
+        closeTo(layer.scaleY * newSize.height / oldSize.height, 0.01),
+      );
+    });
+
+    test('嵌套组内图层随纸张一起缩放', () {
+      final a4 = PaperPresets.byId('a4');
+      final inch6 = PaperPresets.byId('inch6');
+      final child = _layer(position: Offset(a4.widthMm * 2, a4.heightMm * 2));
+      final doc = EditorDocument(
+        paper: a4,
+        landscape: false,
+        layers: [
+          GroupLayer(
+            id: 'group-1',
+            name: '图层组',
+            visible: true,
+            locked: false,
+            opacity: 1,
+            children: [child],
+          ),
+        ],
+      );
+      final next = doc.remapped(paper: inch6);
+      final group = next.layers.first as GroupLayer;
+      final mapped = group.children.first as ImageLayer;
+      final sx = next.sizePx.width / doc.sizePx.width;
+      final sy = next.sizePx.height / doc.sizePx.height;
+      expect(mapped.position.dx, closeTo(child.position.dx * sx, 0.01));
+      expect(mapped.position.dy, closeTo(child.position.dy * sy, 0.01));
+      expect(mapped.scaleX, closeTo(child.scaleX * sx, 0.01));
+      expect(mapped.scaleY, closeTo(child.scaleY * sy, 0.01));
     });
 
     test('横纵切换保持相对位置', () {
@@ -333,6 +370,76 @@ void main() {
       await controller.addSampleImages();
       controller.toggleOrientation();
       expect(exportFileName(controller.document), contains('横向'));
+    });
+
+    test('全部纸张与横纵组合导出尺寸为 300DPI', () async {
+      for (final spec in PaperPresets.all) {
+        for (final landscape in const [false, true]) {
+          controller.setPaper(spec.id);
+          if (controller.landscape != landscape) {
+            controller.toggleOrientation();
+          }
+          expect(controller.paper.id, spec.id);
+          expect(controller.landscape, landscape);
+          final bytes = await controller.exportPngBytes();
+          expect(_isPng(bytes), isTrue, reason: '${spec.id} $landscape');
+          final image = await decodeImageBytes(bytes);
+          final expected = controller.document.exportSizePx();
+          expect(image.width, expected.width.round().clamp(1, 20000));
+          expect(image.height, expected.height.round().clamp(1, 20000));
+          image.dispose();
+        }
+      }
+    });
+
+    test('有图时切换纸张再导出，文件名与像素跟着变', () async {
+      await controller.addSampleImages();
+      final generation = controller.viewGeneration;
+
+      controller.setPaper('inch6');
+      expect(controller.viewGeneration, greaterThan(generation));
+      expect(exportFileName(controller.document), contains('6寸'));
+      var bytes = await controller.exportPngBytes();
+      var image = await decodeImageBytes(bytes);
+      expect(image.width, controller.document.exportSizePx().width.round());
+      expect(image.height, controller.document.exportSizePx().height.round());
+      image.dispose();
+
+      controller.toggleOrientation();
+      expect(exportFileName(controller.document), contains('横向'));
+      bytes = await controller.exportPngBytes();
+      image = await decodeImageBytes(bytes);
+      expect(image.width, greaterThan(image.height));
+      expect(image.width, controller.document.exportSizePx().width.round());
+      image.dispose();
+
+      controller.setPaper('one_inch');
+      expect(exportFileName(controller.document), contains('一寸'));
+      bytes = await controller.exportPngBytes();
+      image = await decodeImageBytes(bytes);
+      expect(image.width, controller.document.exportSizePx().width.round());
+      expect(image.height, controller.document.exportSizePx().height.round());
+      image.dispose();
+
+      controller.undo();
+      expect(controller.paper.id, 'inch6');
+      bytes = await controller.exportPngBytes();
+      image = await decodeImageBytes(bytes);
+      expect(image.width, controller.document.exportSizePx().width.round());
+      image.dispose();
+    });
+
+    test('裁剪进行中不能换纸张，导出仍是已提交文档', () async {
+      await controller.addSampleImages();
+      controller.setPaper('a3');
+      controller.enterCrop();
+      controller.setPaper('a5');
+      expect(controller.paper.id, 'a3');
+      final bytes = await controller.exportPngBytes();
+      final image = await decodeImageBytes(bytes);
+      expect(image.width, controller.document.exportSizePx().width.round());
+      image.dispose();
+      controller.cancelCrop();
     });
 
     test('解码未完成时 dispose 不抛错', () async {

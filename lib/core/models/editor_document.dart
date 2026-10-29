@@ -90,6 +90,8 @@ List<EditorLayer> _scaleLayers(
       if (layer is ImageLayer)
         layer.copyWith(
           position: Offset(layer.position.dx * sx, layer.position.dy * sy),
+          scaleX: layer.scaleX * sx,
+          scaleY: layer.scaleY * sy,
         )
       else if (layer is GroupLayer)
         layer.copyWith(children: _scaleLayers(layer.children, sx, sy))

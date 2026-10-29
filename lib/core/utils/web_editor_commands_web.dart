@@ -1,6 +1,9 @@
 // ignore_for_file: avoid_web_libraries_in_flutter
 
+import 'dart:async';
 import 'dart:html' as html;
+
+import 'package:flutter/scheduler.dart';
 
 import '../../features/editor/tools/import_images.dart';
 import '../../features/editor/tools/sample_image.dart';
@@ -19,29 +22,33 @@ void bindWebEditorCommands({
   required Future<void> Function() exportPng,
 }) {
   unbindWebEditorCommands();
+  final zone = Zone.current;
   _listener = (html.Event event) {
-    final name = '${(event as html.CustomEvent).detail}';
-    final root = html.document.documentElement;
-    root?.setAttribute('data-last-command', name);
-    root?.removeAttribute('data-last-command-error');
-    root?.setAttribute('data-last-command-status', 'running');
-    final editor = controller();
-    Future<void>(() async {
-      try {
-        await _handle(
-          name,
-          controller: editor,
-          openLayers: openLayers,
-          importImages: importImages,
-          exportPng: exportPng,
-        );
-        root?.setAttribute('data-last-command-status', 'ok');
-      } catch (error) {
-        root?.setAttribute('data-last-command-error', '$error');
-        root?.setAttribute('data-last-command-status', 'error');
-      } finally {
-        _writeState(editor);
-      }
+    zone.run(() {
+      final name = '${(event as html.CustomEvent).detail}';
+      final root = html.document.documentElement;
+      root?.setAttribute('data-last-command', name);
+      root?.removeAttribute('data-last-command-error');
+      root?.setAttribute('data-last-command-status', 'running');
+      final editor = controller();
+      Future<void>(() async {
+        try {
+          await _handle(
+            name,
+            controller: editor,
+            openLayers: openLayers,
+            importImages: importImages,
+            exportPng: exportPng,
+          );
+          root?.setAttribute('data-last-command-status', 'ok');
+        } catch (error) {
+          root?.setAttribute('data-last-command-error', '$error');
+          root?.setAttribute('data-last-command-status', 'error');
+        } finally {
+          SchedulerBinding.instance.ensureVisualUpdate();
+          _writeState(editor);
+        }
+      });
     });
   };
   html.window.addEventListener('pic-editor-command', _listener);
@@ -66,7 +73,20 @@ void _writeState(EditorController controller) {
   root.setAttribute('data-layer-count', '${controller.layers.length}');
   root.setAttribute('data-decoded-count', '${controller.decodedImages.length}');
   root.setAttribute('data-paper', controller.paper.id);
-  root.setAttribute('data-landscape', controller.landscape ? '1' : '0');
+  root.setAttribute('data-paper-label', controller.paper.label);
+  root.setAttribute(
+    'data-landscape',
+    controller.landscape ? '1' : '0',
+  );
+  final exportSize = controller.document.exportSizePx();
+  root.setAttribute(
+    'data-export-width',
+    '${exportSize.width.round().clamp(1, 20000)}',
+  );
+  root.setAttribute(
+    'data-export-height',
+    '${exportSize.height.round().clamp(1, 20000)}',
+  );
   root.setAttribute('data-crop', controller.cropMode ? '1' : '0');
   root.setAttribute('data-selected', controller.selectedLayerId ?? '');
   root.setAttribute('data-can-undo', controller.canUndo ? '1' : '0');
@@ -112,10 +132,18 @@ Future<void> _handle(
       await _importDemo(controller);
       break;
     case 'paper-a3':
-      controller.setPaper('a3');
-      break;
+    case 'paper-a4':
+    case 'paper-a5':
+    case 'paper-letter':
+    case 'paper-inch5':
     case 'paper-inch6':
-      controller.setPaper('inch6');
+    case 'paper-inch7':
+    case 'paper-inch8':
+    case 'paper-one_inch':
+    case 'paper-small_one_inch':
+    case 'paper-two_inch':
+    case 'paper-id_card':
+      controller.setPaper(name.substring('paper-'.length));
       break;
     case 'orientation':
       controller.toggleOrientation();

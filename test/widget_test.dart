@@ -5,6 +5,7 @@ import 'package:pic_editor/app.dart';
 import 'package:pic_editor/core/models/place_mode.dart';
 import 'package:pic_editor/features/editor/editor_page.dart';
 import 'package:pic_editor/features/editor/widgets/layer_panel.dart';
+import 'package:pic_editor/core/utils/decode_image.dart';
 import 'package:pic_editor/features/editor/tools/import_images.dart';
 import 'package:pic_editor/features/editor/tools/sample_image.dart';
 import 'package:pic_editor/features/editor/widgets/editor_canvas.dart';
@@ -96,6 +97,52 @@ void main() {
     await tester.pump();
     expect(controller.landscape, isTrue);
     expect(find.textContaining('横向'), findsWidgets);
+  });
+
+  testWidgets('菜单切换纸张后导出尺寸跟着变', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1400, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(const PicEditorApp());
+    await tester.pump();
+
+    final controller =
+        tester.element(find.byType(EditorPage)).read<EditorController>();
+    await controller.addSampleImages();
+    await tester.pump();
+
+    await tester.tap(find.byTooltip('选择纸张'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('6寸').last);
+    await tester.pumpAndSettle();
+    expect(controller.paper.id, 'inch6');
+    expect(find.textContaining('6寸'), findsWidgets);
+
+    final sixInch = await tester.runAsync(controller.exportPngBytes);
+    expect(sixInch, isNotNull);
+    final sixImage = await tester.runAsync(() => decodeImageBytes(sixInch!));
+    expect(sixImage!.width, controller.document.exportSizePx().width.round());
+    expect(sixImage.height, controller.document.exportSizePx().height.round());
+    sixImage.dispose();
+
+    await tester.tap(find.byTooltip('当前纵向，点击改为横向'));
+    await tester.pump();
+    expect(controller.landscape, isTrue);
+
+    await tester.tap(find.byTooltip('选择纸张'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.textContaining('一寸  25'));
+    await tester.pumpAndSettle();
+    expect(controller.paper.id, 'one_inch');
+
+    final idPhoto = await tester.runAsync(controller.exportPngBytes);
+    final idImage = await tester.runAsync(() => decodeImageBytes(idPhoto!));
+    expect(idImage!.width, controller.document.exportSizePx().width.round());
+    expect(idImage.width, greaterThan(idImage.height));
+    idImage.dispose();
+
+    expect(find.byTooltip('导出 PNG'), findsOneWidget);
   });
 
   testWidgets('点击示例图后可裁剪、翻转、撤销删除', (WidgetTester tester) async {
